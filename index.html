@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>终极汇率转换器</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css"/>
+<style>
+body {
+    font-family: 'Roboto', sans-serif;
+    background: linear-gradient(120deg,#f0f2f5,#d9e2ef);
+    margin: 0; padding: 0;
+}
+.container {
+    max-width: 480px;
+    margin: 20px auto;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    padding: 20px;
+}
+h1 { text-align: center; color: #333; margin-bottom: 20px; font-size: 22px;}
+.input-group { display: flex; flex-direction: column; margin-bottom: 15px;}
+label { margin-bottom: 5px; font-weight: 500; color: #555;}
+input, select { padding: 14px; font-size: 16px; border-radius: 10px; border: 1px solid #ccc;}
+button { width: 100%; padding: 14px; font-size: 16px; background: #007BFF; color: white; border: none; border-radius: 10px; cursor: pointer; margin-top: 10px;}
+button:hover { background: #0056b3;}
+.result-card {
+    margin-top: 20px;
+    background: linear-gradient(135deg,#ffffff,#f0f3f7);
+    padding: 20px;
+    border-radius: 16px;
+    text-align: center;
+    font-size: 18px;
+    color: #333;
+    position: relative;
+}
+.copy-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #007BFF;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.copy-btn:hover { background: #0056b3;}
+footer { margin-top: 20px; text-align: center; font-size: 12px; color: #999;}
+.refresh { text-align: center; margin-top: 10px; color: #007BFF; cursor: pointer; font-size: 14px;}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>终极汇率转换器</h1>
+    <div class="input-group">
+        <label for="amount">金额</label>
+        <input type="number" id="amount" value="1">
+    </div>
+    <div class="input-group">
+        <label for="fromCurrency">从货币</label>
+        <select id="fromCurrency"></select>
+    </div>
+    <div class="input-group">
+        <label for="toCurrency">到货币</label>
+        <select id="toCurrency"></select>
+    </div>
+    <button id="convertBtn">转换</button>
+    <div class="result-card" id="result">
+        结果显示在这里
+        <button class="copy-btn" id="copyBtn">复制</button>
+    </div>
+    <div class="refresh" id="refreshBtn">刷新汇率</div>
+    <footer>数据来源：exchangerate.host & CoinGecko</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+<script>
+const amountInput = document.getElementById('amount');
+const fromSelect = document.getElementById('fromCurrency');
+const toSelect = document.getElementById('toCurrency');
+const convertBtn = document.getElementById('convertBtn');
+const resultDiv = document.getElementById('result');
+const refreshBtn = document.getElementById('refreshBtn');
+const copyBtn = document.getElementById('copyBtn');
+
+// Choices.js 初始化
+const fromChoice = new Choices(fromSelect, { searchEnabled: true });
+const toChoice = new Choices(toSelect, { searchEnabled: true });
+
+// 法币列表
+let fiatCurrencies = [];
+// 虚拟币列表
+let cryptoList = [];
+
+// 拉取法币列表
+async function fetchFiatList() {
+    const res = await fetch('https://api.exchangerate.host/symbols');
+    const data = await res.json();
+    fiatCurrencies = Object.keys(data.symbols);
+}
+
+// 拉取虚拟币列表
+async function fetchCryptoList() {
+    const res = await fetch('https://api.coingecko.com/api/v3/coins/list');
+    cryptoList = await res.json(); // {id,symbol,name}
+}
+
+// 填充下拉菜单
+function populateOptions() {
+    const allOptions = [];
+    fiatCurrencies.forEach(c => allOptions.push({value:c,label:c}));
+    cryptoList.forEach(c => allOptions.push({value:c.symbol.toUpperCase(),label:`${c.name} (${c.symbol.toUpperCase()})`}));
+    fromChoice.setChoices(allOptions,'value','label',true);
+    toChoice.setChoices(allOptions,'value','label',true);
+    fromChoice.setChoiceByValue('CNY');
+    toChoice.setChoiceByValue('USD');
+}
+
+// 法币汇率缓存
+let fiatRates = {};
+async function fetchFiatRates() {
+    if(fiatCurrencies.length===0) await fetchFiatList();
+    const symbols = fiatCurrencies.join(',');
+    const res = await fetch(`https://api.exchangerate.host/latest?base=CNY&symbols=${symbols}`);
+    const data = await res.json();
+    fiatRates = data.rates;
+}
+
+// 获取虚拟币价格
+async function fetchCryptoRate(fromSymbol,toSymbol){
+    const fromCrypto = cryptoList.find(c=>c.symbol.toUpperCase()===fromSymbol);
+    const toCrypto = cryptoList.find(c=>c.symbol.toUpperCase()===toSymbol);
+    if(fromCrypto && !toCrypto){
+        const vs = toSymbol.toLowerCase();
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${fromCrypto.id}&vs_currencies=${vs}`);
+        const data = await res.json();
+        return data[fromCrypto.id][vs];
+    } else if(fromCrypto && toCrypto){
+        const res1 = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${fromCrypto.id}&vs_currencies=usd`);
+        const res2 = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${toCrypto.id}&vs_currencies=usd`);
+        const d1 = await res1.json();
+        const d2 = await res2.json();
+        return d1[fromCrypto.id].usd / d2[toCrypto.id].usd;
+    } else if(!fromCrypto && toCrypto){
+        const vs = fromSymbol.toLowerCase();
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${toCrypto.id}&vs_currencies=${vs}`);
+        const data = await res.json();
+        return 1/data[toCrypto.id][vs];
+    } else {
+        if(!fiatRates[toSymbol]) await fetchFiatRates();
+        let rate = fiatRates[toSymbol];
+        if(fromSymbol!=='CNY') rate = rate / fiatRates[fromSymbol];
+        return rate;
+    }
+}
+
+// 转换
+async function convert(){
+    const amount = parseFloat(amountInput.value);
+    const from = fromSelect.value;
+    const to = toSelect.value;
+    if(isNaN(amount)||amount<=0){ resultDiv.textContent='请输入有效金额'; return; }
+    resultDiv.querySelector('#copyBtn').style.display='inline-block';
+    resultDiv.textContent='计算中...';
+    try{
+        const rate = await fetchCryptoRate(from,to);
+        const converted = (amount*rate).toFixed(6);
+        resultDiv.innerHTML = `${amount} ${from} ≈ ${converted} ${to} <button class="copy-btn" id="copyBtn">复制</button>`;
+        document.getElementById('copyBtn').addEventListener('click',()=>{navigator.clipboard.writeText(`${amount} ${from} ≈ ${converted} ${to}`); alert('已复制');});
+    } catch(e){
+        console.error(e);
+        resultDiv.textContent='转换失败，请稍后再试';
+    }
+}
+
+// 初始化
+(async function(){
+    await fetchFiatList();
+    await fetchCryptoList();
+    populateOptions();
+    await fetchFiatRates();
+})();
+
+// 事件绑定
+convertBtn.addEventListener('click',convert);
+refreshBtn.addEventListener('click',async ()=>{
+    await fetchFiatRates();
+    resultDiv.textContent='汇率已刷新';
+});
+
+// 自动刷新
+setInterval(fetchFiatRates,60000);
+</script>
+</body>
+</html>
